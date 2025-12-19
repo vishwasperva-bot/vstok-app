@@ -32,14 +32,15 @@ class LoginRequest(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     telegram_chat_id: Optional[str] = None
     whatsapp_number: Optional[str] = None
-    alert_interval: Optional[int] = None
+    # Make alert_interval default to 0 but detect if it was provided using __fields_set__
+    alert_interval: int = 0
 
 
 class ProfileResponse(BaseModel):
     username: str
-    telegram_chat_id: Optional[str]
-    whatsapp_number: Optional[str]
-    alert_interval: int
+    telegram_chat_id: Optional[str] = None
+    whatsapp_number: Optional[str] = None
+    alert_interval: int = 0
 
 
 # ------------------ DB DEPENDENCY ------------------
@@ -112,7 +113,8 @@ def update_profile(
     if data.whatsapp_number is not None:
         user.whatsapp_number = encrypt(data.whatsapp_number)
 
-    if data.alert_interval is not None:
+    # Only update alert_interval if it was provided in the request payload
+    if "alert_interval" in data.__fields_set__:
         user.alert_interval = data.alert_interval
 
     db.commit()
@@ -127,10 +129,26 @@ def get_profile(db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # 🔓 Decrypt on READ
+    # 🔓 Decrypt on READ (only if values exist). Guard against None/empty and any decrypt errors.
+    telegram = None
+    if user.telegram_chat_id:
+        try:
+            telegram = decrypt(user.telegram_chat_id)
+        except Exception:
+            telegram = None
+
+    whatsapp = None
+    if user.whatsapp_number:
+        try:
+            whatsapp = decrypt(user.whatsapp_number)
+        except Exception:
+            whatsapp = None
+
+    alert = user.alert_interval if user.alert_interval is not None else 0
+
     return ProfileResponse(
         username=user.username,
-        telegram_chat_id=decrypt(user.telegram_chat_id),
-        whatsapp_number=decrypt(user.whatsapp_number),
-        alert_interval=user.alert_interval
+        telegram_chat_id=telegram,
+        whatsapp_number=whatsapp,
+        alert_interval=alert
     )
